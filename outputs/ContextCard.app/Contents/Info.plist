@@ -6,6 +6,8 @@
 	<string>ContextCard</string>
 	<key>CFBundleExecutable</key>
 	<string>ContextCard</string>
+	<key>CFBundleIconFile</key>
+	<string>ContextCard</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.contextcard.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
