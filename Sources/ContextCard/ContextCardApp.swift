@@ -6,7 +6,7 @@ struct ContextCardApp: App {
     @StateObject private var model = CardComposerModel()
 
     init() {
-        if let iconURL = Bundle.module.url(forResource: "ContextCard", withExtension: "icns"),
+        if let iconURL = Bundle.main.url(forResource: "ContextCard", withExtension: "icns"),
            let appIcon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = appIcon
         }

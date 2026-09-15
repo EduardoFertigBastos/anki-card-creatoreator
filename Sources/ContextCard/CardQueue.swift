@@ -2,12 +2,12 @@ import Foundation
 
 struct QueuedCard: Codable, Equatable, Identifiable {
     let id: UUID
-    let sentence: String
-    let keyword: String
+    var sentence: String
+    var keyword: String
     var translation: String
     var keywordMeaning: String
     let audioFilename: String
-    let deckName: String
+    var deckName: String
     let createdAt: Date
     var lastError: String?
 

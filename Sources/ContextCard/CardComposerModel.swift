@@ -299,6 +299,34 @@ final class CardComposerModel: ObservableObject {
         }
     }
 
+    func updateQueuedCard(_ card: QueuedCard) {
+        do {
+            if let pendingIndex = pendingCards.firstIndex(where: { $0.id == card.id }) {
+                pendingCards[pendingIndex] = card
+                try queueStore.savePending(pendingCards)
+            } else if let errorIndex = errorCards.firstIndex(where: { $0.id == card.id }) {
+                errorCards[errorIndex] = card
+                try queueStore.saveErrors(errorCards)
+            }
+            statusMessage = "Queued card updated."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func deleteQueuedCard(_ card: QueuedCard) {
+        do {
+            pendingCards.removeAll { $0.id == card.id }
+            errorCards.removeAll { $0.id == card.id }
+            try queueStore.savePending(pendingCards)
+            try queueStore.saveErrors(errorCards)
+            try? FileManager.default.removeItem(at: card.audioFileURL)
+            statusMessage = "Queued card deleted."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func saveSettings() {
         UserDefaults.standard.set(apiEndpoint, forKey: "translation.endpoint")
         UserDefaults.standard.set(modelName, forKey: "translation.model")
