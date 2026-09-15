@@ -4,15 +4,15 @@ import Foundation
 @MainActor
 final class CardComposerModel: ObservableObject {
     @Published var sentence = ""
-    @Published var selectedKeyword = ""
+    @Published var selectedTokenIDs: Set<Int> = []
     @Published var translation = ""
     @Published var keywordMeaning = ""
     @Published var audioFileURL: URL?
     @Published var isGenerating = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
-    @Published var apiEndpoint = UserDefaults.standard.string(forKey: "translation.endpoint") ?? "https://api.openai.com/v1/chat/completions"
-    @Published var modelName = UserDefaults.standard.string(forKey: "translation.model") ?? "gpt-4o-mini"
+    @Published var apiEndpoint = UserDefaults.standard.string(forKey: "translation.endpoint") ?? Environment.value(for: "OPENAI_API_ENDPOINT") ?? "https://api.openai.com/v1/chat/completions"
+    @Published var modelName = UserDefaults.standard.string(forKey: "translation.model") ?? Environment.value(for: "OPENAI_MODEL") ?? "gpt-4o-mini"
     @Published var apiKey: String
 
     private let fallbackTranslationService: TranslationService
@@ -23,9 +23,19 @@ final class CardComposerModel: ObservableObject {
     init(translationService: TranslationService = DraftTranslationService()) {
         self.fallbackTranslationService = translationService
         self.apiKey = KeychainStore().readAPIKey()
+        if self.apiKey.isEmpty {
+            self.apiKey = Environment.value(for: "OPENAI_API_KEY") ?? ""
+        }
     }
 
     var tokens: [WordToken] { TextProcessing.tokens(in: sentence) }
+
+    var selectedKeyword: String {
+        tokens
+            .filter { selectedTokenIDs.contains($0.id) }
+            .map(\.text)
+            .joined(separator: " ")
+    }
 
     var canGenerate: Bool {
         !sentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !selectedKeyword.isEmpty
@@ -35,8 +45,12 @@ final class CardComposerModel: ObservableObject {
         CardDraft(sentence: sentence, keyword: selectedKeyword, translation: translation, keywordMeaning: keywordMeaning, audioFileURL: audioFileURL)
     }
 
-    func select(keyword: String) {
-        selectedKeyword = keyword
+    func toggleKeyword(tokenID: Int) {
+        if selectedTokenIDs.contains(tokenID) {
+            selectedTokenIDs.remove(tokenID)
+        } else {
+            selectedTokenIDs.insert(tokenID)
+        }
         errorMessage = nil
     }
 
@@ -99,7 +113,7 @@ final class CardComposerModel: ObservableObject {
 
     func reset() {
         sentence = ""
-        selectedKeyword = ""
+        selectedTokenIDs.removeAll()
         translation = ""
         keywordMeaning = ""
         audioFileURL = nil

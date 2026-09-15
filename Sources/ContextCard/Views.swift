@@ -54,7 +54,7 @@ private struct SentenceSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(number: "01", title: "English sentence")
-            TextEditor(text: $model.sentence)
+                    TextEditor(text: $model.sentence)
                 .font(.system(size: 17))
                 .frame(minHeight: 96)
                 .padding(10)
@@ -62,9 +62,8 @@ private struct SentenceSection: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25)))
                 .onChange(of: model.sentence) { _ in
-                    if !model.tokens.contains(where: { $0.text.caseInsensitiveCompare(model.selectedKeyword) == .orderedSame }) {
-                        model.selectedKeyword = ""
-                    }
+                    let validIDs = Set(model.tokens.map(\.id))
+                    model.selectedTokenIDs = model.selectedTokenIDs.intersection(validIDs)
                 }
             Text("Paste or type the subtitle sentence here.")
                 .font(.caption)
@@ -88,14 +87,14 @@ private struct KeywordSection: View {
                 FlowLayout(spacing: 8) {
                     ForEach(model.tokens) { token in
                         Button {
-                            model.select(keyword: token.text)
+                            model.toggleKeyword(tokenID: token.id)
                         } label: {
                             Text(token.text)
-                                .font(.system(size: 15, weight: token.text.caseInsensitiveCompare(model.selectedKeyword) == .orderedSame ? .semibold : .regular))
-                                .foregroundStyle(token.text.caseInsensitiveCompare(model.selectedKeyword) == .orderedSame ? .white : .primary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(token.text.caseInsensitiveCompare(model.selectedKeyword) == .orderedSame ? Color.blue : Color.secondary.opacity(0.12))
+                                .font(.system(size: 15, weight: model.selectedTokenIDs.contains(token.id) ? .semibold : .regular))
+                                .foregroundStyle(model.selectedTokenIDs.contains(token.id) ? .white : .primary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 6)
+                                .background(model.selectedTokenIDs.contains(token.id) ? Color.blue : Color.secondary.opacity(0.12))
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
@@ -226,13 +225,48 @@ private struct SectionLabel: View {
     }
 }
 
-private struct FlowLayout<Content: View>: View {
+private struct FlowLayout: Layout {
     let spacing: CGFloat
-    @ViewBuilder let content: Content
 
-    var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: spacing)], alignment: .leading, spacing: spacing) {
-            content
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var widestRow: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth > 0, rowWidth + spacing + size.width > maxWidth {
+                widestRow = max(widestRow, rowWidth)
+                totalHeight += rowHeight + spacing
+                rowWidth = 0
+                rowHeight = 0
+            }
+            rowWidth += (rowWidth == 0 ? 0 : spacing) + size.width
+            rowHeight = max(rowHeight, size.height)
+        }
+
+        widestRow = max(widestRow, rowWidth)
+        totalHeight += rowHeight
+        return CGSize(width: proposal.width ?? widestRow, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }
