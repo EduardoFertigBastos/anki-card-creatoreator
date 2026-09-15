@@ -12,7 +12,7 @@ struct OpenAICompatibleTranslationService: TranslationService {
 
     func translate(sentence: String, keyword: String) async throws -> TranslationResult {
         let instructions = """
-        Translate an English learning sentence into Brazilian Portuguese. Return only valid JSON with exactly these string fields: sentenceTranslation and keywordMeaning. sentenceTranslation must translate the complete sentence naturally. keywordMeaning must explain the selected English keyword in this context, with a concise Portuguese meaning and no extra commentary.
+        Translate an English learning sentence into Brazilian Portuguese. Return only valid JSON with exactly these string fields: sentenceTranslation and keywordMeaning. sentenceTranslation must translate the complete sentence naturally. keywordMeaning must explain the selected English keyword in this context, with a concise Portuguese meaning and no extra commentary. This is for a language-learning card; keep the text natural and neutral, and never imitate or impersonate a character, celebrity, or speaker from the source video.
 
         English sentence: \(sentence)
         Selected keyword: \(keyword)
@@ -140,15 +140,26 @@ struct AnkiService {
                         "Front": TextProcessing.highlightedHTML(sentence: draft.sentence, keyword: draft.keyword),
                         "Back": "<p>\(TextProcessing.escapeHTML(draft.translation))</p><p><b>\(TextProcessing.escapeHTML(draft.keyword))</b>: \(TextProcessing.escapeHTML(draft.keywordMeaning))</p>"
                     ],
-                    "options": ["allowDuplicate": false],
+                    "options": ["allowDuplicate": true],
                     "tags": ["contextcard", "english"],
                     "audio": [[
                         "filename": audioURL.lastPathComponent,
                         "data": audioData.base64EncodedString(),
-                        "fields": ["Back"]
+                        "fields": ["Front"]
                     ]]
                 ]
             ]
+        ]
+
+        _ = try await post(action: "createDeck", params: ["deck": deckName])
+        _ = try await post(action: "addNote", params: requestBody["params"] as? [String: Any] ?? [:])
+    }
+
+    private func post(action: String, params: [String: Any]) async throws -> Any? {
+        let requestBody: [String: Any] = [
+            "action": action,
+            "version": 6,
+            "params": params
         ]
 
         var request = URLRequest(url: endpoint)
@@ -161,9 +172,14 @@ struct AnkiService {
             guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
                 throw CardComposerError.ankiUnavailable("AnkiConnect did not respond successfully. Is Anki open with AnkiConnect installed?")
             }
-            if let result = try JSONSerialization.jsonObject(with: data) as? [String: Any], result["error"] as? String != nil {
-                throw CardComposerError.ankiUnavailable("AnkiConnect returned an error while creating the note.")
+
+            guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CardComposerError.ankiUnavailable("AnkiConnect returned an invalid response.")
             }
+            if let error = result["error"], !(error is NSNull) {
+                throw CardComposerError.ankiUnavailable("AnkiConnect: \(String(describing: error))")
+            }
+            return result["result"]
         } catch let error as CardComposerError {
             throw error
         } catch {

@@ -14,11 +14,13 @@ final class CardComposerModel: ObservableObject {
     @Published var apiEndpoint = UserDefaults.standard.string(forKey: "translation.endpoint") ?? Environment.value(for: "OPENAI_API_ENDPOINT") ?? "https://api.openai.com/v1/chat/completions"
     @Published var modelName = UserDefaults.standard.string(forKey: "translation.model") ?? Environment.value(for: "OPENAI_MODEL") ?? "gpt-4o-mini"
     @Published var apiKey: String
+    @Published var selectedCollection = Collections.defaultCollection
 
     private let fallbackTranslationService: TranslationService
     private let speechService = LocalSpeechService()
     private let ankiService = AnkiService()
     private let keychainStore = KeychainStore()
+    let voiceInputService = VoiceTranscriptionService()
 
     init(translationService: TranslationService = DraftTranslationService()) {
         self.fallbackTranslationService = translationService
@@ -94,7 +96,7 @@ final class CardComposerModel: ObservableObject {
 
         Task {
             do {
-                try await ankiService.createNote(from: draft)
+                try await ankiService.createNote(from: draft, deckName: selectedCollection)
                 statusMessage = "Card sent to Anki."
             } catch {
                 errorMessage = error.localizedDescription
@@ -119,6 +121,31 @@ final class CardComposerModel: ObservableObject {
         audioFileURL = nil
         statusMessage = nil
         errorMessage = nil
+    }
+
+    func beginVoiceInput() {
+        Task {
+            do {
+                try await voiceInputService.start()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func stopVoiceInput() {
+        voiceInputService.stop()
+    }
+
+    func useVoiceTranscript() {
+        let value = voiceInputService.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        sentence = value
+        selectedTokenIDs.removeAll()
+        translation = ""
+        keywordMeaning = ""
+        audioFileURL = nil
+        statusMessage = "Transcript added. Choose the keyword to continue."
     }
 
     func saveSettings() {

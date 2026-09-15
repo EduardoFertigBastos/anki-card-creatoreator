@@ -22,5 +22,9 @@
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ContextCard uses the microphone to transcribe English sentences into flashcards.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>ContextCard uses speech recognition to transcribe your English sentence.</string>
 </dict>
 </plist>

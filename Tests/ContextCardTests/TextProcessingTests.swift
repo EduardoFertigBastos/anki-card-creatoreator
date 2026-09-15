@@ -11,4 +11,14 @@ final class TextProcessingTests: XCTestCase {
         let html = TextProcessing.highlightedHTML(sentence: "It's awkward <today>.", keyword: "awkward")
         XCTAssertEqual(html, "It&#39;s <b>awkward</b> &lt;today&gt;.")
     }
+
+    func testMultiWordKeywordIsEmphasizedAsOnePhrase() {
+        let html = TextProcessing.highlightedHTML(sentence: "I barely understood.", keyword: "barely understood")
+        XCTAssertEqual(html, "I <b>barely understood</b>.")
+    }
+
+    func testInitialCollectionIsTheRequestedAnkiDeck() {
+        XCTAssertEqual(Collections.defaultCollection, "Anki Create English")
+        XCTAssertTrue(Collections.available.contains("Anki Create English"))
+    }
 }

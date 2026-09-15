@@ -28,6 +28,8 @@ enum CardComposerError: LocalizedError {
     case missingKeyword
     case translationUnavailable
     case translationFailed(String)
+    case microphonePermissionDenied
+    case speechRecognitionPermissionDenied
     case audioGenerationFailed(String)
     case ankiUnavailable(String)
 
@@ -41,6 +43,10 @@ enum CardComposerError: LocalizedError {
             return "Translation is not configured yet. You can still edit the Portuguese fields manually."
         case let .translationFailed(message):
             return message
+        case .microphonePermissionDenied:
+            return "Microphone access is disabled. Enable it for ContextCard in System Settings > Privacy & Security > Microphone."
+        case .speechRecognitionPermissionDenied:
+            return "Speech recognition access is disabled. Enable it for ContextCard in System Settings > Privacy & Security > Speech Recognition."
         case let .audioGenerationFailed(message), let .ankiUnavailable(message):
             return message
         }
