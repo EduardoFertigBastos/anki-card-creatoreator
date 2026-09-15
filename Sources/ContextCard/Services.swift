@@ -123,6 +123,10 @@ struct LocalSpeechService {
 struct AnkiService {
     let endpoint = URL(string: "http://127.0.0.1:8765")!
 
+    func checkConnection() async throws {
+        _ = try await post(action: "version", params: [:])
+    }
+
     func createNote(from draft: CardDraft, deckName: String = "ContextCard") async throws {
         guard let audioURL = draft.audioFileURL else {
             throw CardComposerError.ankiUnavailable("Generate audio before sending the card to Anki.")

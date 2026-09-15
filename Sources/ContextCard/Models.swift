@@ -30,6 +30,7 @@ enum CardComposerError: LocalizedError {
     case translationFailed(String)
     case microphonePermissionDenied
     case speechRecognitionPermissionDenied
+    case imageOCRFailed(String)
     case audioGenerationFailed(String)
     case ankiUnavailable(String)
 
@@ -47,6 +48,8 @@ enum CardComposerError: LocalizedError {
             return "Microphone access is disabled. Enable it for ContextCard in System Settings > Privacy & Security > Microphone."
         case .speechRecognitionPermissionDenied:
             return "Speech recognition access is disabled. Enable it for ContextCard in System Settings > Privacy & Security > Speech Recognition."
+        case let .imageOCRFailed(message):
+            return message
         case let .audioGenerationFailed(message), let .ankiUnavailable(message):
             return message
         }

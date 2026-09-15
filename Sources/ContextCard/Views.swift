@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var model: CardComposerModel
@@ -60,11 +61,19 @@ private struct HeaderView: View {
 private struct SentenceSection: View {
     @ObservedObject var model: CardComposerModel
     @ObservedObject var voiceService: VoiceTranscriptionService
+    @State private var isImportingImage = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(number: "01", title: "English sentence")
             HStack(spacing: 10) {
+                Button {
+                    isImportingImage = true
+                } label: {
+                    Label("Import image", systemImage: "photo")
+                }
+                .buttonStyle(.bordered)
+
                 Button {
                     if voiceService.isRecording {
                         model.stopVoiceInput()
@@ -75,15 +84,6 @@ private struct SentenceSection: View {
                     Label(voiceService.isRecording ? "Stop recording" : "Record sentence", systemImage: voiceService.isRecording ? "stop.circle.fill" : "mic.fill")
                 }
                 .buttonStyle(.bordered)
-
-                if !voiceService.transcript.isEmpty, !voiceService.isRecording {
-                    Button {
-                        model.useVoiceTranscript()
-                    } label: {
-                        Label("Use transcript", systemImage: "text.badge.checkmark")
-                    }
-                    .buttonStyle(.bordered)
-                }
 
                 if voiceService.isRecording {
                     Label("Listening…", systemImage: "waveform")
@@ -102,7 +102,9 @@ private struct SentenceSection: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-            TextEditor(text: $model.sentence)
+            ClipboardTextEditor(text: $model.sentence) { image in
+                model.extractTextFromImage(image)
+            }
                 .font(.system(size: 17))
                 .frame(minHeight: 96)
                 .padding(10)
@@ -113,7 +115,22 @@ private struct SentenceSection: View {
                     let validIDs = Set(model.tokens.map(\.id))
                     model.selectedTokenIDs = model.selectedTokenIDs.intersection(validIDs)
                 }
-            Text("Paste or type the subtitle sentence here.")
+                .onChange(of: voiceService.isRecording) { isRecording in
+                    if !isRecording, !voiceService.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        model.useVoiceTranscript()
+                    }
+                }
+                .fileImporter(isPresented: $isImportingImage, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
+                    switch result {
+                    case let .success(urls):
+                        if let url = urls.first {
+                            model.extractTextFromImage(url)
+                        }
+                    case let .failure(error):
+                        model.errorMessage = "Could not import the image: \(error.localizedDescription)"
+                    }
+                }
+            Text("Paste or type text, or press Command-V with an image copied to the clipboard.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -213,6 +230,14 @@ private struct CardPreviewSection: View {
                 .buttonStyle(.bordered)
                 .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating)
 
+                Button {
+                    model.saveOffline()
+                } label: {
+                    Label(model.offlineSaveCooldownRemaining > 0 ? "Saved (\(model.offlineSaveCooldownRemaining))" : "Save offline", systemImage: "tray.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating || model.offlineSaveCooldownRemaining > 0)
+
                 Spacer()
 
                 Button("Clear") { model.reset() }
@@ -220,10 +245,64 @@ private struct CardPreviewSection: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let offlineFeedback = model.offlineFeedback {
+                Label(
+                    model.offlineSaveCooldownRemaining > 0 ? "\(offlineFeedback) Save available in \(model.offlineSaveCooldownRemaining)s." : offlineFeedback,
+                    systemImage: "checkmark.circle.fill"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.green)
+            }
+
             if let statusMessage = model.statusMessage {
                 Label(statusMessage, systemImage: "checkmark.circle")
                     .font(.caption)
                     .foregroundStyle(.green)
+            }
+
+            if !model.pendingCards.isEmpty || !model.errorCards.isEmpty {
+                HStack(spacing: 14) {
+                    Label("\(model.pendingCards.count) queued", systemImage: "tray.full")
+                    Label("\(model.errorCards.count) errors", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(model.errorCards.isEmpty ? Color.secondary : Color.orange)
+                    Spacer()
+                    Button {
+                        model.syncPendingCards()
+                    } label: {
+                        Label("Sync queue", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.pendingCards.isEmpty || model.isGenerating)
+
+                    Button {
+                        model.retryErrorCards()
+                    } label: {
+                        Label("Retry errors", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.errorCards.isEmpty || model.isGenerating)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                if !model.errorCards.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Error queue")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        ForEach(model.errorCards.prefix(3)) { card in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(card.sentence)
+                                    .lineLimit(1)
+                                Text(card.lastError ?? "Unknown sync error")
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
         }
     }
