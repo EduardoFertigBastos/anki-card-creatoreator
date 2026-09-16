@@ -1,5 +1,6 @@
 .build/
 DerivedData/
+ContextCard.app/
 *.xcuserstate
 .DS_Store
 .env
