@@ -30,6 +30,7 @@ private enum ButtonVisibilityKey {
 struct ContentView: View {
     @ObservedObject var model: CardComposerModel
     @State private var keyboardTarget: FocusTarget?
+    @State private var sentenceFocusRequest = 0
     @FocusState private var textFieldFocus: FocusTarget?
     @AppStorage(ButtonVisibilityKey.generateDraft) private var showGenerateDraft = true
     @AppStorage(ButtonVisibilityKey.saveOffline) private var showSaveOffline = true
@@ -47,7 +48,7 @@ struct ContentView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: isCompact ? 20 : 24) {
-                        SentenceSection(model: model, voiceService: model.voiceInputService, keyboardTarget: $keyboardTarget, isCompact: isCompact)
+                        SentenceSection(model: model, voiceService: model.voiceInputService, keyboardTarget: $keyboardTarget, sentenceFocusRequest: $sentenceFocusRequest, isCompact: isCompact)
                         KeywordSection(model: model, keyboardTarget: $keyboardTarget)
                         GenerateDraftButton(model: model, keyboardTarget: $keyboardTarget)
                         CardPreviewSection(model: model, isCompact: isCompact, keyboardTarget: $keyboardTarget, textFieldFocus: $textFieldFocus)
@@ -69,6 +70,11 @@ struct ContentView: View {
             if let value {
                 keyboardTarget = value
             }
+        }
+        .onChange(of: model.formResetGeneration) { _ in
+            keyboardTarget = .sentence
+            textFieldFocus = nil
+            sentenceFocusRequest += 1
         }
         .alert("Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil },
@@ -180,6 +186,7 @@ private struct SentenceSection: View {
     @ObservedObject var model: CardComposerModel
     @ObservedObject var voiceService: VoiceTranscriptionService
     @Binding var keyboardTarget: FocusTarget?
+    @Binding var sentenceFocusRequest: Int
     let isCompact: Bool
     @State private var isImportingImage = false
     @AppStorage(ButtonVisibilityKey.importImage) private var showImportImage = true
@@ -232,6 +239,7 @@ private struct SentenceSection: View {
             }
             ClipboardTextEditor(
                 text: $model.sentence,
+                focusRequest: $sentenceFocusRequest,
                 onImagePaste: { image in
                     model.extractTextFromImage(image)
                 },
@@ -310,7 +318,7 @@ private struct GenerateDraftButton: View {
                         } label: {
                             Label(model.offlineSaveCooldownRemaining > 0 ? "Saved (\(model.offlineSaveCooldownRemaining))" : "Save offline", systemImage: "tray.and.arrow.down")
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
                         .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating || model.offlineSaveCooldownRemaining > 0)
                         .focusable()
                         .keyboardFocusStyle(keyboardTarget == .saveOffline)
@@ -420,7 +428,7 @@ private struct CardPreviewSection: View {
                         } label: {
                             Label("Send to Anki", systemImage: "arrow.up.circle")
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
                         .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating)
                         .focusable()
                         .keyboardFocusStyle(keyboardTarget == .sendToAnki)
@@ -552,6 +560,7 @@ private struct CardPreviewSection: View {
                 TextField("Sentence translation", text: $model.translation, axis: .vertical)
                     .lineLimit(1...2)
                     .focused($textFieldFocus, equals: .translation)
+                TextField("Keyword translation", text: $model.keywordTranslation)
                 Divider()
                 TextField("Keyword meaning", text: $model.keywordMeaning, axis: .vertical)
                     .lineLimit(1...2)
@@ -563,10 +572,11 @@ private struct CardPreviewSection: View {
 
     private var frontText: AttributedString {
         var result = AttributedString(model.sentence)
-        guard !model.selectedKeyword.isEmpty,
-              let range = result.range(of: model.selectedKeyword, options: .caseInsensitive) else { return result }
-        result[range].font = .system(size: 16, weight: .bold)
-        result[range].foregroundColor = .blue
+        for token in model.tokens where model.selectedTokenIDs.contains(token.id) {
+            guard let range = Range(token.range, in: result) else { continue }
+            result[range].font = .system(size: 16, weight: .bold)
+            result[range].foregroundColor = .blue
+        }
         return result
     }
 }
@@ -764,6 +774,10 @@ private struct QueueEditView: View {
                 TextField("English text", text: $card.sentence, axis: .vertical)
                     .lineLimit(3...6)
                 TextField("Keyword", text: $card.keyword)
+                TextField("Keyword translation", text: Binding(
+                    get: { card.keywordTranslation ?? "" },
+                    set: { card.keywordTranslation = $0 }
+                ))
                 TextField("Portuguese translation", text: $card.translation, axis: .vertical)
                     .lineLimit(2...5)
                 TextField("Keyword meaning", text: $card.keywordMeaning, axis: .vertical)

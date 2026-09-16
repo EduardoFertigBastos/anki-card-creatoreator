@@ -8,12 +8,14 @@ final class CardComposerModel: ObservableObject {
     @Published var sentence = ""
     @Published var selectedTokenIDs: Set<Int> = []
     @Published var translation = ""
+    @Published var keywordTranslation = ""
     @Published var keywordMeaning = ""
     @Published var audioFileURL: URL?
     @Published var isGenerating = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var offlineFeedback: String?
+    @Published private(set) var formResetGeneration = 0
     @Published private(set) var offlineSaveCooldownRemaining = 0
     @Published var apiEndpoint = UserDefaults.standard.string(forKey: "translation.endpoint") ?? Environment.value(for: "OPENAI_API_ENDPOINT") ?? "https://api.openai.com/v1/chat/completions"
     @Published var modelName = UserDefaults.standard.string(forKey: "translation.model") ?? Environment.value(for: "OPENAI_MODEL") ?? "gpt-4o-mini"
@@ -58,7 +60,25 @@ final class CardComposerModel: ObservableObject {
     }
 
     var draft: CardDraft {
-        CardDraft(sentence: sentence, keyword: selectedKeyword, translation: translation, keywordMeaning: keywordMeaning, audioFileURL: audioFileURL)
+        CardDraft(
+            sentence: sentence,
+            keyword: selectedKeyword,
+            keywordTranslation: keywordTranslation,
+            translation: translation,
+            keywordMeaning: keywordMeaning,
+            audioFileURL: audioFileURL,
+            frontHTML: selectedFrontHTML
+        )
+    }
+
+    var selectedKeywordRanges: [Range<String.Index>] {
+        tokens
+            .filter { selectedTokenIDs.contains($0.id) }
+            .map(\.range)
+    }
+
+    var selectedFrontHTML: String {
+        TextProcessing.highlightedHTML(sentence: sentence, ranges: selectedKeywordRanges)
     }
 
     func toggleKeyword(tokenID: Int) {
@@ -97,6 +117,7 @@ final class CardComposerModel: ObservableObject {
                 async let audioTask = speechService.generateAudio(for: sentenceToGenerate)
                 let (result, generatedAudioURL) = try await (translationTask, audioTask)
                 translation = result.sentenceTranslation
+                keywordTranslation = result.keywordTranslation
                 keywordMeaning = result.keywordMeaning
                 audioFileURL = generatedAudioURL
                 statusMessage = apiKey.isEmpty ? "Draft ready in local demo mode. Add an API key in Settings for real translation." : "Draft ready. Review the fields before exporting."
@@ -120,7 +141,9 @@ final class CardComposerModel: ObservableObject {
         Task {
             do {
                 try await ankiService.createNote(from: draft, deckName: selectedCollection)
+                reset()
                 statusMessage = "Card sent to Anki."
+                formResetGeneration += 1
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -129,8 +152,8 @@ final class CardComposerModel: ObservableObject {
     }
 
     func copyForAnki() {
-        let front = TextProcessing.highlightedHTML(sentence: sentence, keyword: selectedKeyword)
-        let back = "<p>\(TextProcessing.escapeHTML(translation))</p><p><b>\(TextProcessing.escapeHTML(selectedKeyword))</b>: \(TextProcessing.escapeHTML(keywordMeaning))</p>"
+        let front = selectedFrontHTML
+        let back = draft.backHTML
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("Front:\n\(front)\n\nBack:\n\(back)", forType: .string)
         statusMessage = "Card HTML copied to the clipboard."
@@ -140,10 +163,12 @@ final class CardComposerModel: ObservableObject {
         sentence = ""
         selectedTokenIDs.removeAll()
         translation = ""
+        keywordTranslation = ""
         keywordMeaning = ""
         audioFileURL = nil
         statusMessage = nil
         errorMessage = nil
+        offlineFeedback = nil
     }
 
     func beginVoiceInput() {
@@ -166,6 +191,7 @@ final class CardComposerModel: ObservableObject {
         sentence = value
         selectedTokenIDs.removeAll()
         translation = ""
+        keywordTranslation = ""
         keywordMeaning = ""
         audioFileURL = nil
         statusMessage = "Transcript added. Choose the keyword to continue."
@@ -178,10 +204,11 @@ final class CardComposerModel: ObservableObject {
 
         Task {
             do {
-                let extractedText = try imageOCRService.extractEnglishText(from: url)
+                let extractedText = try await imageOCRService.extractEnglishText(from: url)
                 sentence = extractedText
                 selectedTokenIDs.removeAll()
                 translation = ""
+                keywordTranslation = ""
                 keywordMeaning = ""
                 audioFileURL = nil
                 statusMessage = "Text extracted from the image. Choose the keyword to continue."
@@ -199,10 +226,11 @@ final class CardComposerModel: ObservableObject {
 
         Task {
             do {
-                let extractedText = try imageOCRService.extractEnglishText(from: image)
+                let extractedText = try await imageOCRService.extractEnglishText(from: image)
                 sentence = extractedText
                 selectedTokenIDs.removeAll()
                 translation = ""
+                keywordTranslation = ""
                 keywordMeaning = ""
                 audioFileURL = nil
                 statusMessage = "Text extracted from the pasted image. Choose the keyword to continue."
@@ -229,8 +257,9 @@ final class CardComposerModel: ObservableObject {
             let card = try QueuedCard(draft: draft, deckName: selectedCollection)
             pendingCards.append(card)
             try queueStore.savePending(pendingCards)
-            offlineFeedback = "Card saved offline. It is waiting to be synced to Anki."
+            reset()
             statusMessage = "Card added to the offline queue."
+            formResetGeneration += 1
             startOfflineSaveCooldown()
         } catch {
             errorMessage = error.localizedDescription

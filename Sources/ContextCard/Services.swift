@@ -16,7 +16,7 @@ struct OpenAICompatibleTranslationService: TranslationService {
 
     func translate(sentence: String, keyword: String) async throws -> TranslationResult {
         let instructions = """
-        Translate an English learning sentence into Brazilian Portuguese. Return only valid JSON with exactly these string fields: sentenceTranslation and keywordMeaning. sentenceTranslation must translate the complete sentence naturally. keywordMeaning must explain the selected English keyword in this context, with a concise Portuguese meaning and no extra commentary. This is for a language-learning card; keep the text natural and neutral, and never imitate or impersonate a character, celebrity, or speaker from the source video.
+        Translate an English learning sentence into Brazilian Portuguese. Return only valid JSON with exactly these string fields: sentenceTranslation, keywordTranslation, and keywordMeaning. sentenceTranslation must translate the complete sentence naturally. keywordTranslation must be the Brazilian Portuguese word or short phrase in sentenceTranslation that corresponds to the selected English keyword. keywordMeaning must explain the selected English keyword in this context in Brazilian Portuguese, but must not repeat the English keyword or start with keywordTranslation followed by a colon. This is for a language-learning card; keep the text natural and neutral, and never imitate or impersonate a character, celebrity, or speaker from the source video.
 
         English sentence: \(sentence)
         Selected keyword: \(keyword)
@@ -53,7 +53,11 @@ struct OpenAICompatibleTranslationService: TranslationService {
             }
 
             let result = try JSONDecoder().decode(TranslationResultDTO.self, from: contentData)
-            return TranslationResult(sentenceTranslation: result.sentenceTranslation, keywordMeaning: result.keywordMeaning)
+            return TranslationResult(
+                sentenceTranslation: result.sentenceTranslation,
+                keywordTranslation: result.keywordTranslation ?? "",
+                keywordMeaning: result.keywordMeaning
+            )
         } catch let error as CardComposerError {
             throw error
         } catch {
@@ -63,6 +67,7 @@ struct OpenAICompatibleTranslationService: TranslationService {
 
     private struct TranslationResultDTO: Decodable {
         let sentenceTranslation: String
+        let keywordTranslation: String?
         let keywordMeaning: String
     }
 }
@@ -89,6 +94,7 @@ struct DraftTranslationService: TranslationService {
         let meaning = commonMeanings[keyword.lowercased()] ?? "Adicione aqui o significado em português."
         return TranslationResult(
             sentenceTranslation: "Adicione aqui a tradução em português.",
+            keywordTranslation: "",
             keywordMeaning: meaning
         )
     }
@@ -210,8 +216,8 @@ struct AnkiService {
                     "deckName": deckName,
                     "modelName": "Basic",
                     "fields": [
-                        "Front": TextProcessing.highlightedHTML(sentence: draft.sentence, keyword: draft.keyword),
-                        "Back": "<p>\(TextProcessing.escapeHTML(draft.translation))</p><p><b>\(TextProcessing.escapeHTML(draft.keyword))</b>: \(TextProcessing.escapeHTML(draft.keywordMeaning))</p>"
+                        "Front": draft.frontHTML ?? TextProcessing.highlightedHTML(sentence: draft.sentence, keyword: draft.keyword),
+                        "Back": draft.backHTML
                     ],
                     "options": ["allowDuplicate": true],
                     "tags": ["contextcard", "english"],

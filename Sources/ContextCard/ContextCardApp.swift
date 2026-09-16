@@ -62,8 +62,23 @@ private enum MenuBarPanelLayout {
 }
 
 private final class ContextCardPanel: NSPanel {
+    var onCancel: (() -> Void)?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53 {
+            onCancel?()
+            return
+        }
+
+        super.sendEvent(event)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
 }
 
 @MainActor
@@ -128,6 +143,9 @@ private final class ContextCardAppDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow = true
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.onCancel = { [weak self] in
+            self?.hidePanel()
+        }
         panel.contentViewController = NSHostingController(
             rootView: MenuBarPanel(model: CardComposerModel.shared)
         )
@@ -160,26 +178,37 @@ private final class ContextCardAppDelegate: NSObject, NSApplicationDelegate {
         )
 
         panel.setFrameOrigin(panelOrigin)
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         installEventMonitors()
     }
 
     private func hidePanel() {
+        CardComposerModel.shared.stopVoiceInput()
         panel?.orderOut(nil)
         removeEventMonitors()
     }
 
     private func installEventMonitors() {
         removeEventMonitors()
-        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
             guard let self else { return event }
+            if event.type == .keyDown, event.keyCode == 53 {
+                self.hidePanel()
+                return nil
+            }
             if event.window !== self.panel, event.window !== self.statusItem?.button?.window {
                 self.hidePanel()
             }
             return event
         }
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.hidePanel()
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            guard let self else { return }
+            if event.type == .keyDown, event.keyCode == 53 {
+                self.hidePanel()
+            } else if event.type == .leftMouseDown || event.type == .rightMouseDown {
+                self.hidePanel()
+            }
         }
     }
 

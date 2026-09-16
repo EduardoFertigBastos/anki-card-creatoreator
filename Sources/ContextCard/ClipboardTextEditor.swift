@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ClipboardTextEditor: NSViewRepresentable {
     @Binding var text: String
+    @Binding var focusRequest: Int
     let onImagePaste: (NSImage) -> Void
     let onFocus: () -> Void
     let onTabForward: () -> Void
@@ -40,6 +41,7 @@ struct ClipboardTextEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? ImagePasteTextView else { return }
+        context.coordinator.parent = self
         textView.imagePasteHandler = onImagePaste
         textView.focusHandler = onFocus
         textView.tabForwardHandler = onTabForward
@@ -47,10 +49,17 @@ struct ClipboardTextEditor: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
+        if context.coordinator.lastFocusRequest != focusRequest {
+            context.coordinator.lastFocusRequest = focusRequest
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+            }
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ClipboardTextEditor
+        var lastFocusRequest = 0
 
         init(_ parent: ClipboardTextEditor) {
             self.parent = parent
@@ -86,8 +95,10 @@ private final class ImagePasteTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
-        if let image = NSImage(pasteboard: NSPasteboard.general) {
-            imagePasteHandler?(image)
+        if let pastedImage = NSImage(pasteboard: NSPasteboard.general),
+           let imageData = pastedImage.tiffRepresentation,
+           let stableImage = NSImage(data: imageData) {
+            imagePasteHandler?(stableImage)
             return
         }
         super.paste(sender)

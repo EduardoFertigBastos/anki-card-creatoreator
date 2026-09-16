@@ -4,8 +4,10 @@ struct QueuedCard: Codable, Equatable, Identifiable {
     let id: UUID
     var sentence: String
     var keyword: String
+    var keywordTranslation: String?
     var translation: String
     var keywordMeaning: String
+    var frontHTML: String?
     let audioFilename: String
     var deckName: String
     let createdAt: Date
@@ -16,7 +18,7 @@ struct QueuedCard: Codable, Equatable, Identifiable {
     }
 
     var draft: CardDraft {
-        CardDraft(sentence: sentence, keyword: keyword, translation: translation, keywordMeaning: keywordMeaning, audioFileURL: audioFileURL)
+        CardDraft(sentence: sentence, keyword: keyword, keywordTranslation: keywordTranslation ?? "", translation: translation, keywordMeaning: keywordMeaning, audioFileURL: audioFileURL, frontHTML: frontHTML)
     }
 
     var fingerprint: String {
@@ -31,8 +33,10 @@ struct QueuedCard: Codable, Equatable, Identifiable {
         id = UUID()
         sentence = draft.sentence
         keyword = draft.keyword
+        keywordTranslation = draft.keywordTranslation
         translation = draft.translation
         keywordMeaning = draft.keywordMeaning
+        frontHTML = draft.frontHTML
         audioFilename = "\(id.uuidString).\(sourceAudioURL.pathExtension.isEmpty ? "aiff" : sourceAudioURL.pathExtension)"
         self.deckName = deckName
         createdAt = Date()
