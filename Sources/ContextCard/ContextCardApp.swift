@@ -8,40 +8,75 @@ struct ContextCardApp: App {
     @StateObject private var model = CardComposerModel.shared
 
     var body: some Scene {
-        WindowGroup("ContextCard Project Build") {
-            ContentView(model: model)
-                .frame(minWidth: 520, idealWidth: 560, minHeight: 700, idealHeight: 760)
-        }
-        .windowResizability(.contentSize)
-        .commands {
-            CommandGroup(replacing: .appTermination) {
-                Button("Quit ContextCard") {
-                    NSApp.terminate(nil)
-                }
-                .keyboardShortcut("q")
-            }
-        }
-
-        MenuBarExtra {
-            Button("Open ContextCard") {
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first(where: { $0.title == "ContextCard" })?.makeKeyAndOrderFront(nil)
-            }
-            Divider()
-            Button("Quit") { NSApp.terminate(nil) }
-        } label: {
-            Image(nsImage: ContextCardIcon.menuBarImage)
-        }
-
         Settings {
             SettingsView(model: model)
         }
     }
 }
 
+private struct MenuBarPanel: View {
+    @ObservedObject var model: CardComposerModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ContentView(model: model)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Button {
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button {
+                    NSApp.terminate(nil)
+                } label: {
+                    Label("Quit", systemImage: "power")
+                }
+                .buttonStyle(.plain)
+            }
+            .font(.callout)
+            .padding(.horizontal, 18)
+            .frame(height: 44)
+        }
+        .frame(width: MenuBarPanelLayout.width, height: MenuBarPanelLayout.height)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.65), lineWidth: 0.5)
+        }
+    }
+}
+
+private enum MenuBarPanelLayout {
+    static let width: CGFloat = 340
+    static let height: CGFloat = 720
+    static let screenMargin: CGFloat = 8
+    static let menuBarGap: CGFloat = 4
+}
+
+private final class ContextCardPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 @MainActor
 private final class ContextCardAppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem?
+    private var panel: ContextCardPanel?
+    private var localEventMonitor: Any?
+    private var globalEventMonitor: Any?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configureStatusItem()
+        configurePanel()
+
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             Unmanaged.passUnretained(self).toOpaque(),
@@ -53,6 +88,7 @@ private final class ContextCardAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        removeEventMonitors()
         CFNotificationCenterRemoveObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             Unmanaged.passUnretained(self).toOpaque(),
@@ -63,6 +99,99 @@ private final class ContextCardAppDelegate: NSObject, NSApplicationDelegate {
 
     func handleSyncQueueRequest() {
         CardComposerModel.shared.syncPendingCards(waitForAnki: true)
+    }
+
+    private func configureStatusItem() {
+        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        guard let button = statusItem.button else { return }
+        button.image = NSImage(systemSymbolName: "rectangle.stack.fill", accessibilityDescription: "ContextCard")
+        button.image?.isTemplate = true
+        button.target = self
+        button.action = #selector(togglePanel)
+        self.statusItem = statusItem
+    }
+
+    private func configurePanel() {
+        let panel = ContextCardPanel(
+            contentRect: NSRect(
+                origin: .zero,
+                size: NSSize(width: MenuBarPanelLayout.width, height: MenuBarPanelLayout.height)
+            ),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.transient, .moveToActiveSpace, .fullScreenAuxiliary]
+        panel.isFloatingPanel = true
+        panel.hidesOnDeactivate = false
+        panel.hasShadow = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.contentViewController = NSHostingController(
+            rootView: MenuBarPanel(model: CardComposerModel.shared)
+        )
+        self.panel = panel
+    }
+
+    @objc private func togglePanel() {
+        guard let panel else { return }
+        if panel.isVisible {
+            hidePanel()
+        } else {
+            showPanel()
+        }
+    }
+
+    private func showPanel() {
+        guard let panel,
+              let button = statusItem?.button,
+              let buttonWindow = button.window,
+              let screen = buttonWindow.screen ?? NSScreen.main else { return }
+
+        let statusFrame = buttonWindow.convertToScreen(button.frame)
+        let visibleFrame = screen.visibleFrame
+        let panelOrigin = NSPoint(
+            x: visibleFrame.maxX - MenuBarPanelLayout.width - MenuBarPanelLayout.screenMargin,
+            y: min(
+                statusFrame.minY - MenuBarPanelLayout.height - MenuBarPanelLayout.menuBarGap,
+                visibleFrame.maxY - MenuBarPanelLayout.height
+            )
+        )
+
+        panel.setFrameOrigin(panelOrigin)
+        panel.makeKeyAndOrderFront(nil)
+        installEventMonitors()
+    }
+
+    private func hidePanel() {
+        panel?.orderOut(nil)
+        removeEventMonitors()
+    }
+
+    private func installEventMonitors() {
+        removeEventMonitors()
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.window !== self.panel, event.window !== self.statusItem?.button?.window {
+                self.hidePanel()
+            }
+            return event
+        }
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.hidePanel()
+        }
+    }
+
+    private func removeEventMonitors() {
+        if let localEventMonitor {
+            NSEvent.removeMonitor(localEventMonitor)
+            self.localEventMonitor = nil
+        }
+        if let globalEventMonitor {
+            NSEvent.removeMonitor(globalEventMonitor)
+            self.globalEventMonitor = nil
+        }
     }
 }
 
@@ -76,37 +205,4 @@ private let contextCardSyncQueueCallback: CFNotificationCallback = { _, observer
     Task { @MainActor in
         appDelegate.handleSyncQueueRequest()
     }
-}
-
-private enum ContextCardIcon {
-    static let menuBarImage: NSImage = {
-        let image = NSImage(size: NSSize(width: 18, height: 18))
-        image.lockFocus()
-
-        NSColor.black.setFill()
-
-        let backCard = NSBezierPath(roundedRect: NSRect(x: 3.1, y: 8.6, width: 11.4, height: 6.7), xRadius: 1.4, yRadius: 1.4)
-        backCard.fill()
-
-        NSColor.white.setFill()
-        NSBezierPath(rect: NSRect(x: 5.2, y: 12.2, width: 7.2, height: 0.9)).fill()
-        NSColor.black.setFill()
-
-        let middleCard = NSBezierPath(roundedRect: NSRect(x: 2.3, y: 5.7, width: 12.6, height: 7.2), xRadius: 1.5, yRadius: 1.5)
-        middleCard.fill()
-
-        NSColor.white.setFill()
-        NSBezierPath(rect: NSRect(x: 4.7, y: 9.6, width: 7.5, height: 0.95)).fill()
-        NSColor.black.setFill()
-
-        let frontCard = NSBezierPath(roundedRect: NSRect(x: 1.6, y: 2.5, width: 13.7, height: 7.7), xRadius: 1.6, yRadius: 1.6)
-        frontCard.fill()
-
-        NSColor.white.setFill()
-        NSBezierPath(rect: NSRect(x: 4.3, y: 6.7, width: 7.7, height: 1.0)).fill()
-
-        image.unlockFocus()
-        image.isTemplate = true
-        return image
-    }()
 }
