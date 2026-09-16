@@ -1,9 +1,11 @@
 import SwiftUI
 import AppKit
+import CoreFoundation
 
 @main
 struct ContextCardApp: App {
-    @StateObject private var model = CardComposerModel()
+    @NSApplicationDelegateAdaptor(ContextCardAppDelegate.self) private var appDelegate
+    @StateObject private var model = CardComposerModel.shared
 
     var body: some Scene {
         WindowGroup("ContextCard Project Build") {
@@ -34,6 +36,45 @@ struct ContextCardApp: App {
         Settings {
             SettingsView(model: model)
         }
+    }
+}
+
+@MainActor
+private final class ContextCardAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            contextCardSyncQueueCallback,
+            contextCardSyncQueueNotificationName.rawValue,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            contextCardSyncQueueNotificationName,
+            nil
+        )
+    }
+
+    func handleSyncQueueRequest() {
+        CardComposerModel.shared.syncPendingCards(waitForAnki: true)
+    }
+}
+
+private let contextCardSyncQueueNotificationName = CFNotificationName(
+    rawValue: "com.contextcard.syncQueueRequested" as CFString
+)
+
+private let contextCardSyncQueueCallback: CFNotificationCallback = { _, observer, _, _, _ in
+    guard let observer else { return }
+    let appDelegate = Unmanaged<ContextCardAppDelegate>.fromOpaque(observer).takeUnretainedValue()
+    Task { @MainActor in
+        appDelegate.handleSyncQueueRequest()
     }
 }
 

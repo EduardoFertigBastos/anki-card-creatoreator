@@ -5,6 +5,10 @@ protocol TranslationService {
     func translate(sentence: String, keyword: String) async throws -> TranslationResult
 }
 
+protocol SpeechService {
+    func generateAudio(for text: String) async throws -> URL
+}
+
 struct OpenAICompatibleTranslationService: TranslationService {
     let endpoint: URL
     let model: String
@@ -90,7 +94,57 @@ struct DraftTranslationService: TranslationService {
     }
 }
 
-struct LocalSpeechService {
+struct OpenAISpeechService: SpeechService {
+    let endpoint: URL
+    let model: String
+    let voice: String
+    let apiKey: String
+
+    func generateAudio(for text: String) async throws -> URL {
+        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanText.isEmpty else { throw CardComposerError.missingSentence }
+
+        let body: [String: Any] = [
+            "model": model,
+            "voice": voice,
+            "input": cleanText,
+            "instructions": "Speak in natural contemporary American English. Read the sentence exactly as written, with clear pronunciation, a calm conversational tone, a normal pace, and no exaggerated pauses.",
+            "response_format": "mp3",
+            "speed": 1.0
+        ]
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode),
+                  !data.isEmpty else {
+                throw CardComposerError.audioGenerationFailed(
+                    "The OpenAI voice service returned an error. Check your API key and audio settings."
+                )
+            }
+
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ContextCard", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileURL = directory.appendingPathComponent("sentence-\(UUID().uuidString).mp3")
+            try data.write(to: fileURL, options: .atomic)
+            return fileURL
+        } catch let error as CardComposerError {
+            throw error
+        } catch {
+            throw CardComposerError.audioGenerationFailed(
+                "Could not generate the OpenAI voice: \(error.localizedDescription)"
+            )
+        }
+    }
+}
+
+struct LocalSpeechService: SpeechService {
     func generateAudio(for text: String) async throws -> URL {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanText.isEmpty else { throw CardComposerError.missingSentence }
@@ -105,18 +159,33 @@ struct LocalSpeechService {
         let errorPipe = Pipe()
         process.standardError = errorPipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw CardComposerError.audioGenerationFailed("Could not start macOS speech synthesis: \(error.localizedDescription)")
-        }
+        return try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { finishedProcess in
+                guard finishedProcess.terminationStatus == 0,
+                      FileManager.default.fileExists(atPath: fileURL.path) else {
+                    let details = String(
+                        data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                        encoding: .utf8
+                    ) ?? ""
+                    continuation.resume(
+                        throwing: CardComposerError.audioGenerationFailed("Audio generation failed. \(details)")
+                    )
+                    return
+                }
+                continuation.resume(returning: fileURL)
+            }
 
-        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: fileURL.path) else {
-            let details = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            throw CardComposerError.audioGenerationFailed("Audio generation failed. \(details)")
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(
+                    throwing: CardComposerError.audioGenerationFailed(
+                        "Could not start macOS speech synthesis: \(error.localizedDescription)"
+                    )
+                )
+            }
         }
-        return fileURL
     }
 }
 

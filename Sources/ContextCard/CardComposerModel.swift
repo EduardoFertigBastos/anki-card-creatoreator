@@ -3,6 +3,8 @@ import Foundation
 
 @MainActor
 final class CardComposerModel: ObservableObject {
+    static let shared = CardComposerModel()
+
     @Published var sentence = ""
     @Published var selectedTokenIDs: Set<Int> = []
     @Published var translation = ""
@@ -15,13 +17,16 @@ final class CardComposerModel: ObservableObject {
     @Published private(set) var offlineSaveCooldownRemaining = 0
     @Published var apiEndpoint = UserDefaults.standard.string(forKey: "translation.endpoint") ?? Environment.value(for: "OPENAI_API_ENDPOINT") ?? "https://api.openai.com/v1/chat/completions"
     @Published var modelName = UserDefaults.standard.string(forKey: "translation.model") ?? Environment.value(for: "OPENAI_MODEL") ?? "gpt-4o-mini"
+    @Published var speechEndpoint = UserDefaults.standard.string(forKey: "speech.endpoint") ?? "https://api.openai.com/v1/audio/speech"
+    @Published var speechModel = UserDefaults.standard.string(forKey: "speech.model") ?? "gpt-4o-mini-tts"
+    @Published var speechVoice = UserDefaults.standard.string(forKey: "speech.voice") ?? "marin"
     @Published var apiKey: String
     @Published var selectedCollection = Collections.defaultCollection
     @Published private(set) var pendingCards: [QueuedCard]
     @Published private(set) var errorCards: [QueuedCard]
 
     private let fallbackTranslationService: TranslationService
-    private let speechService = LocalSpeechService()
+    private let fallbackSpeechService = LocalSpeechService()
     private let ankiService = AnkiService()
     private let keychainStore = KeychainStore()
     private let queueStore = CardQueueStore()
@@ -78,13 +83,22 @@ final class CardComposerModel: ObservableObject {
         isGenerating = true
         statusMessage = nil
         errorMessage = nil
+        let sentenceToGenerate = sentence
+        let keywordToGenerate = selectedKeyword
+        let translationService = makeTranslationService()
+        let speechService = makeSpeechService()
 
         Task {
             do {
-                let result = try await makeTranslationService().translate(sentence: sentence, keyword: selectedKeyword)
+                async let translationTask = translationService.translate(
+                    sentence: sentenceToGenerate,
+                    keyword: keywordToGenerate
+                )
+                async let audioTask = speechService.generateAudio(for: sentenceToGenerate)
+                let (result, generatedAudioURL) = try await (translationTask, audioTask)
                 translation = result.sentenceTranslation
                 keywordMeaning = result.keywordMeaning
-                audioFileURL = try await speechService.generateAudio(for: sentence)
+                audioFileURL = generatedAudioURL
                 statusMessage = apiKey.isEmpty ? "Draft ready in local demo mode. Add an API key in Settings for real translation." : "Draft ready. Review the fields before exporting."
             } catch {
                 errorMessage = error.localizedDescription
@@ -234,7 +248,8 @@ final class CardComposerModel: ObservableObject {
         }
     }
 
-    func syncPendingCards() {
+    func syncPendingCards(waitForAnki: Bool = false) {
+        guard !isGenerating else { return }
         guard !pendingCards.isEmpty else {
             statusMessage = "The offline queue is empty."
             return
@@ -245,7 +260,7 @@ final class CardComposerModel: ObservableObject {
 
         Task {
             do {
-                try await ankiService.checkConnection()
+                try await checkAnkiConnection(attempts: waitForAnki ? 5 : 1)
                 let remaining: [QueuedCard] = []
                 var failed: [QueuedCard] = []
                 for var card in pendingCards {
@@ -266,6 +281,21 @@ final class CardComposerModel: ObservableObject {
             }
             isGenerating = false
         }
+    }
+
+    private func checkAnkiConnection(attempts: Int) async throws {
+        var lastError: Error?
+        for attempt in 1...attempts {
+            do {
+                try await ankiService.checkConnection()
+                return
+            } catch {
+                lastError = error
+                guard attempt < attempts else { break }
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+        throw lastError ?? CardComposerError.ankiUnavailable("Anki is not available.")
     }
 
     func retryErrorCards() {
@@ -330,6 +360,9 @@ final class CardComposerModel: ObservableObject {
     func saveSettings() {
         UserDefaults.standard.set(apiEndpoint, forKey: "translation.endpoint")
         UserDefaults.standard.set(modelName, forKey: "translation.model")
+        UserDefaults.standard.set(speechEndpoint, forKey: "speech.endpoint")
+        UserDefaults.standard.set(speechModel, forKey: "speech.model")
+        UserDefaults.standard.set(speechVoice, forKey: "speech.voice")
         do {
             try keychainStore.saveAPIKey(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
             statusMessage = "Settings saved securely."
@@ -344,5 +377,19 @@ final class CardComposerModel: ObservableObject {
             return fallbackTranslationService
         }
         return OpenAICompatibleTranslationService(endpoint: endpoint, model: modelName, apiKey: apiKey)
+    }
+
+    private func makeSpeechService() -> SpeechService {
+        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAPIKey.isEmpty,
+              let endpoint = URL(string: speechEndpoint), endpoint.scheme != nil else {
+            return fallbackSpeechService
+        }
+        return OpenAISpeechService(
+            endpoint: endpoint,
+            model: speechModel,
+            voice: speechVoice,
+            apiKey: trimmedAPIKey
+        )
     }
 }
