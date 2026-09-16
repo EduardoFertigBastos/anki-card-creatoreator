@@ -43,7 +43,7 @@ struct ContentView: View {
             let isCompact = geometry.size.width < 640
 
             VStack(alignment: .leading, spacing: 0) {
-                HeaderView(model: model, isCompact: isCompact)
+                HeaderView(model: model, collectionStore: model.collectionStore, isCompact: isCompact)
                 Divider()
 
                 ScrollView {
@@ -146,6 +146,7 @@ struct ContentView: View {
 
 private struct HeaderView: View {
     @ObservedObject var model: CardComposerModel
+    @ObservedObject var collectionStore: CollectionStore
     let isCompact: Bool
 
     var body: some View {
@@ -159,8 +160,11 @@ private struct HeaderView: View {
             }
 
             HStack {
-                Picker("Collection", selection: $model.selectedCollection) {
-                    ForEach(Collections.available, id: \.self) { collection in
+                Picker("Collection", selection: Binding(
+                    get: { model.selectedCollection },
+                    set: { model.selectCollection($0) }
+                )) {
+                    ForEach(collectionStore.collections, id: \.self) { collection in
                         Text(collection).tag(collection)
                     }
                 }
@@ -783,7 +787,7 @@ private struct QueueEditView: View {
                 TextField("Keyword meaning", text: $card.keywordMeaning, axis: .vertical)
                     .lineLimit(2...5)
                 Picker("Collection", selection: $card.deckName) {
-                    ForEach(Collections.available, id: \.self) { collection in
+                    ForEach(CollectionStore.shared.collections, id: \.self) { collection in
                         Text(collection).tag(collection)
                     }
                 }
@@ -988,6 +992,11 @@ private struct KeyboardNavigationMonitor: NSViewRepresentable {
 
 struct SettingsView: View {
     @ObservedObject var model: CardComposerModel
+    @ObservedObject var collectionStore: CollectionStore
+    @State private var newCollectionName = ""
+    @State private var editingCollection: String?
+    @State private var editingCollectionName = ""
+    @State private var collectionError: String?
     @AppStorage(ButtonVisibilityKey.importImage) private var showImportImage = true
     @AppStorage(ButtonVisibilityKey.recordSentence) private var showRecordSentence = true
     @AppStorage(ButtonVisibilityKey.generateDraft) private var showGenerateDraft = true
@@ -1001,6 +1010,67 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Anki collections") {
+                Text("Create or rename the Anki decks available in the main window. At least one collection must remain.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(collectionStore.collections, id: \.self) { collection in
+                    HStack {
+                        if editingCollection == collection {
+                            TextField("Collection name", text: $editingCollectionName)
+                                .onSubmit { renameCollection(collection) }
+                            Button("Save") { renameCollection(collection) }
+                                .buttonStyle(.borderedProminent)
+                            Button("Cancel") { editingCollection = nil }
+                        } else {
+                            Text(collection)
+                            Spacer()
+                            if model.selectedCollection == collection {
+                                Text("Selected")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button {
+                                editingCollection = collection
+                                editingCollectionName = collection
+                            } label: {
+                                Image(systemName: "pencil")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Rename collection")
+                            Button(role: .destructive) {
+                                if !model.removeCollection(collection) {
+                                    collectionError = "At least one collection must remain."
+                                }
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(collectionStore.collections.count == 1)
+                            .help("Delete collection")
+                        }
+                    }
+                }
+
+                HStack {
+                    TextField("New collection name", text: $newCollectionName)
+                        .onSubmit { addCollection() }
+                    Button {
+                        addCollection()
+                    } label: {
+                        Label("Add", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if let collectionError {
+                    Text(collectionError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
             Section("Main window buttons") {
                 Toggle("Import image", isOn: $showImportImage)
                 Toggle("Record sentence", isOn: $showRecordSentence)
@@ -1055,7 +1125,31 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 540, height: 680)
+        .frame(width: 540, height: 780)
         .padding()
+    }
+
+    private func addCollection() {
+        let name = newCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            collectionError = "Collection name cannot be empty."
+            return
+        }
+        guard model.addCollection(name) else {
+            collectionError = "A collection with this name already exists."
+            return
+        }
+        newCollectionName = ""
+        collectionError = nil
+    }
+
+    private func renameCollection(_ oldName: String) {
+        let name = editingCollectionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard model.renameCollection(oldName, to: name) else {
+            collectionError = name.isEmpty ? "Collection name cannot be empty." : "A collection with this name already exists."
+            return
+        }
+        editingCollection = nil
+        collectionError = nil
     }
 }

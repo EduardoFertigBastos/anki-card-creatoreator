@@ -9,7 +9,7 @@ struct ContextCardApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsView(model: model)
+            SettingsView(model: model, collectionStore: model.collectionStore)
         }
     }
 }

@@ -23,7 +23,7 @@ final class CardComposerModel: ObservableObject {
     @Published var speechModel = UserDefaults.standard.string(forKey: "speech.model") ?? "gpt-4o-mini-tts"
     @Published var speechVoice = UserDefaults.standard.string(forKey: "speech.voice") ?? "marin"
     @Published var apiKey: String
-    @Published var selectedCollection = Collections.defaultCollection
+    @Published var selectedCollection: String
     @Published private(set) var pendingCards: [QueuedCard]
     @Published private(set) var errorCards: [QueuedCard]
 
@@ -33,6 +33,7 @@ final class CardComposerModel: ObservableObject {
     private let keychainStore = KeychainStore()
     private let queueStore = CardQueueStore()
     private let imageOCRService = ImageOCRService()
+    let collectionStore = CollectionStore.shared
     let voiceInputService = VoiceTranscriptionService()
 
     init(translationService: TranslationService = DraftTranslationService()) {
@@ -42,6 +43,9 @@ final class CardComposerModel: ObservableObject {
         }
         self.fallbackTranslationService = translationService
         self.apiKey = resolvedAPIKey
+        let availableCollections = CollectionStore.shared.collections
+        let savedCollection = UserDefaults.standard.string(forKey: "anki.selectedCollection")
+        self.selectedCollection = savedCollection.flatMap { availableCollections.contains($0) ? $0 : nil } ?? availableCollections[0]
         self.pendingCards = CardQueueStore().loadPending()
         self.errorCards = CardQueueStore().loadErrors()
     }
@@ -88,6 +92,28 @@ final class CardComposerModel: ObservableObject {
             selectedTokenIDs.insert(tokenID)
         }
         errorMessage = nil
+    }
+
+    func selectCollection(_ collection: String) {
+        guard collectionStore.collections.contains(collection) else { return }
+        selectedCollection = collection
+        UserDefaults.standard.set(collection, forKey: "anki.selectedCollection")
+    }
+
+    func addCollection(_ name: String) -> Bool {
+        collectionStore.add(name)
+    }
+
+    func renameCollection(_ oldName: String, to newName: String) -> Bool {
+        guard collectionStore.rename(oldName, to: newName) else { return false }
+        if selectedCollection == oldName { selectCollection(newName.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        return true
+    }
+
+    func removeCollection(_ name: String) -> Bool {
+        guard collectionStore.remove(name) else { return false }
+        if selectedCollection == name, let replacement = collectionStore.collections.first { selectCollection(replacement) }
+        return true
     }
 
     func generateDraft() {
