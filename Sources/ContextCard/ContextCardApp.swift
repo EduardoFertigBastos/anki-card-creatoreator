@@ -5,19 +5,20 @@ import AppKit
 struct ContextCardApp: App {
     @StateObject private var model = CardComposerModel()
 
-    init() {
-        if let iconURL = Bundle.main.url(forResource: "ContextCard", withExtension: "icns"),
-           let appIcon = NSImage(contentsOf: iconURL) {
-            NSApp.applicationIconImage = appIcon
-        }
-    }
-
     var body: some Scene {
-        WindowGroup("ContextCard") {
+        WindowGroup("ContextCard Project Build") {
             ContentView(model: model)
-                .frame(minWidth: 820, minHeight: 640)
+                .frame(minWidth: 520, idealWidth: 560, minHeight: 700, idealHeight: 760)
         }
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit ContextCard") {
+                    NSApp.terminate(nil)
+                }
+                .keyboardShortcut("q")
+            }
+        }
 
         MenuBarExtra {
             Button("Open ContextCard") {

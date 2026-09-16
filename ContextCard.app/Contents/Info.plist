@@ -3,23 +3,23 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>ContextCard</string>
+	<string>ContextCard Project Build</string>
 	<key>CFBundleExecutable</key>
 	<string>ContextCard</string>
 	<key>CFBundleIconFile</key>
 	<string>ContextCard</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.contextcard.app</string>
+	<string>com.contextcard.project</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>ContextCard</string>
+	<string>ContextCard Project Build</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.0-project</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>

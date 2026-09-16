@@ -1,24 +1,75 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum FocusTarget: Hashable {
+    case sentence
+    case keyword(Int)
+    case generateDraft
+    case saveOffline
+    case translation
+    case keywordMeaning
+    case copyForAnki
+    case sendToAnki
+    case clear
+}
+
+private enum ButtonVisibilityKey {
+    static let importImage = "buttonVisibility.importImage"
+    static let recordSentence = "buttonVisibility.recordSentence"
+    static let generateDraft = "buttonVisibility.generateDraft"
+    static let saveOffline = "buttonVisibility.saveOffline"
+    static let copyForAnki = "buttonVisibility.copyForAnki"
+    static let sendToAnki = "buttonVisibility.sendToAnki"
+    static let clear = "buttonVisibility.clear"
+    static let manageQueue = "buttonVisibility.manageQueue"
+    static let syncQueue = "buttonVisibility.syncQueue"
+    static let retryErrors = "buttonVisibility.retryErrors"
+}
+
 struct ContentView: View {
     @ObservedObject var model: CardComposerModel
+    @State private var keyboardTarget: FocusTarget?
+    @FocusState private var textFieldFocus: FocusTarget?
+    @AppStorage(ButtonVisibilityKey.generateDraft) private var showGenerateDraft = true
+    @AppStorage(ButtonVisibilityKey.saveOffline) private var showSaveOffline = true
+    @AppStorage(ButtonVisibilityKey.copyForAnki) private var showCopyForAnki = true
+    @AppStorage(ButtonVisibilityKey.sendToAnki) private var showSendToAnki = true
+    @AppStorage(ButtonVisibilityKey.clear) private var showClear = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HeaderView(model: model)
-            Divider()
+        GeometryReader { geometry in
+            let isCompact = geometry.size.width < 640
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    SentenceSection(model: model, voiceService: model.voiceInputService)
-                    KeywordSection(model: model)
-                    CardPreviewSection(model: model)
+            VStack(alignment: .leading, spacing: 0) {
+                HeaderView(model: model, isCompact: isCompact)
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: isCompact ? 20 : 24) {
+                        SentenceSection(model: model, voiceService: model.voiceInputService, keyboardTarget: $keyboardTarget, isCompact: isCompact)
+                        KeywordSection(model: model, keyboardTarget: $keyboardTarget)
+                        GenerateDraftButton(model: model, keyboardTarget: $keyboardTarget)
+                        CardPreviewSection(model: model, isCompact: isCompact, keyboardTarget: $keyboardTarget, textFieldFocus: $textFieldFocus)
+                    }
+                    .padding(.horizontal, isCompact ? 18 : 32)
+                    .padding(.vertical, isCompact ? 20 : 32)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(32)
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .background(
+            KeyboardNavigationMonitor(
+                onTab: moveKeyboardFocus,
+                onEnter: activateFocusedControl
+            )
+        )
+        .onChange(of: textFieldFocus) { value in
+            if let value {
+                keyboardTarget = value
+            }
+        }
         .alert("Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -28,67 +79,144 @@ struct ContentView: View {
             Text(model.errorMessage ?? "")
         }
     }
+
+    private var keyboardOrder: [FocusTarget] {
+        var order: [FocusTarget] = [.sentence] + model.tokens.map { .keyword($0.id) }
+        if showGenerateDraft { order.append(.generateDraft) }
+        if showSaveOffline { order.append(.saveOffline) }
+        order.append(contentsOf: [.translation, .keywordMeaning])
+        if showCopyForAnki { order.append(.copyForAnki) }
+        if showSendToAnki { order.append(.sendToAnki) }
+        if showClear { order.append(.clear) }
+        return order
+    }
+
+    private func moveKeyboardFocus(forward: Bool) -> Bool {
+        guard let keyboardTarget else { return false }
+        guard let currentIndex = keyboardOrder.firstIndex(of: keyboardTarget) else {
+            self.keyboardTarget = forward ? keyboardOrder.first : keyboardOrder.last
+            return self.keyboardTarget != nil
+        }
+
+        let nextIndex = forward ? currentIndex + 1 : currentIndex - 1
+        guard keyboardOrder.indices.contains(nextIndex) else { return false }
+        let target = keyboardOrder[nextIndex]
+        self.keyboardTarget = target
+        if target == .translation || target == .keywordMeaning {
+            DispatchQueue.main.async {
+                self.textFieldFocus = target
+            }
+        } else {
+            textFieldFocus = nil
+        }
+        return true
+    }
+
+    private func activateFocusedControl() -> Bool {
+        switch keyboardTarget {
+        case let .keyword(tokenID):
+            model.toggleKeyword(tokenID: tokenID)
+            return true
+        case .generateDraft where showGenerateDraft && model.canGenerate && !model.isGenerating:
+            model.generateDraft()
+            return true
+        case .saveOffline where showSaveOffline && !model.translation.isEmpty && model.audioFileURL != nil && !model.isGenerating && model.offlineSaveCooldownRemaining == 0:
+            model.saveOffline()
+            return true
+        case .copyForAnki where showCopyForAnki && model.draft.hasContent:
+            model.copyForAnki()
+            return true
+        case .sendToAnki where showSendToAnki && !model.translation.isEmpty && model.audioFileURL != nil && !model.isGenerating:
+            model.sendToAnki()
+            return true
+        case .clear where showClear:
+            model.reset()
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 private struct HeaderView: View {
     @ObservedObject var model: CardComposerModel
+    let isCompact: Bool
 
     var body: some View {
-        HStack(alignment: .center) {
+        VStack(alignment: .leading, spacing: isCompact ? 12 : 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("ContextCard")
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: isCompact ? 22 : 24, weight: .semibold))
                 Text("Turn one sentence into a useful English flashcard.")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            Spacer()
-            Picker("Collection", selection: $model.selectedCollection) {
-                ForEach(Collections.available, id: \.self) { collection in
-                    Text(collection).tag(collection)
+
+            HStack {
+                Picker("Collection", selection: $model.selectedCollection) {
+                    ForEach(Collections.available, id: \.self) { collection in
+                        Text(collection).tag(collection)
+                    }
                 }
+                .pickerStyle(.menu)
+                .frame(maxWidth: isCompact ? .infinity : 210, alignment: .leading)
+
+                if !isCompact {
+                    Spacer()
+                }
+
+                Image(systemName: "character.book.closed")
+                    .font(.system(size: 26, weight: .medium))
+                    .foregroundStyle(.blue)
             }
-            .pickerStyle(.menu)
-            .frame(width: 210)
-            Image(systemName: "character.book.closed")
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(.blue)
         }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, isCompact ? 18 : 32)
+        .padding(.vertical, isCompact ? 16 : 22)
     }
 }
 
 private struct SentenceSection: View {
     @ObservedObject var model: CardComposerModel
     @ObservedObject var voiceService: VoiceTranscriptionService
+    @Binding var keyboardTarget: FocusTarget?
+    let isCompact: Bool
     @State private var isImportingImage = false
+    @AppStorage(ButtonVisibilityKey.importImage) private var showImportImage = true
+    @AppStorage(ButtonVisibilityKey.recordSentence) private var showRecordSentence = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(number: "01", title: "English sentence")
-            HStack(spacing: 10) {
-                Button {
-                    isImportingImage = true
-                } label: {
-                    Label("Import image", systemImage: "photo")
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    if voiceService.isRecording {
-                        model.stopVoiceInput()
-                    } else {
-                        model.beginVoiceInput()
+            if showImportImage || showRecordSentence {
+                HStack(spacing: 10) {
+                    if showImportImage {
+                        Button {
+                            isImportingImage = true
+                        } label: {
+                            Label("Import image", systemImage: "photo")
+                        }
+                        .buttonStyle(.bordered)
                     }
-                } label: {
-                    Label(voiceService.isRecording ? "Stop recording" : "Record sentence", systemImage: voiceService.isRecording ? "stop.circle.fill" : "mic.fill")
-                }
-                .buttonStyle(.bordered)
 
-                if voiceService.isRecording {
-                    Label("Listening…", systemImage: "waveform")
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                    if showRecordSentence {
+                        Button {
+                            if voiceService.isRecording {
+                                model.stopVoiceInput()
+                            } else {
+                                model.beginVoiceInput()
+                            }
+                        } label: {
+                            Label(voiceService.isRecording ? "Stop recording" : "Record sentence", systemImage: voiceService.isRecording ? "stop.circle.fill" : "mic.fill")
+                        }
+                        .buttonStyle(.bordered)
+
+                        if voiceService.isRecording {
+                            Label("Listening…", systemImage: "waveform")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
                 }
             }
             if !voiceService.transcript.isEmpty {
@@ -102,11 +230,27 @@ private struct SentenceSection: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-            ClipboardTextEditor(text: $model.sentence) { image in
-                model.extractTextFromImage(image)
-            }
+            ClipboardTextEditor(
+                text: $model.sentence,
+                onImagePaste: { image in
+                    model.extractTextFromImage(image)
+                },
+                onFocus: {
+                    keyboardTarget = .sentence
+                },
+                onTabForward: {
+                    if let firstToken = model.tokens.first {
+                        keyboardTarget = .keyword(firstToken.id)
+                    } else {
+                        keyboardTarget = .generateDraft
+                    }
+                },
+                onTabBackward: {
+                    keyboardTarget = .sentence
+                }
+            )
                 .font(.system(size: 17))
-                .frame(minHeight: 96)
+                .frame(height: isCompact ? 58 : 68)
                 .padding(10)
                 .background(Color(nsColor: .textBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -137,8 +281,51 @@ private struct SentenceSection: View {
     }
 }
 
+private struct GenerateDraftButton: View {
+    @ObservedObject var model: CardComposerModel
+    @Binding var keyboardTarget: FocusTarget?
+    @AppStorage(ButtonVisibilityKey.generateDraft) private var showGenerateDraft = true
+    @AppStorage(ButtonVisibilityKey.saveOffline) private var showSaveOffline = true
+
+    var body: some View {
+        Group {
+            if showGenerateDraft || showSaveOffline {
+                HStack {
+                    if showGenerateDraft {
+                        Button {
+                            model.generateDraft()
+                        } label: {
+                            Label("Generate draft", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!model.canGenerate || model.isGenerating)
+                        .keyboardShortcut(.defaultAction)
+                        .focusable()
+                        .keyboardFocusStyle(keyboardTarget == .generateDraft)
+                    }
+
+                    if showSaveOffline {
+                        Button {
+                            model.saveOffline()
+                        } label: {
+                            Label(model.offlineSaveCooldownRemaining > 0 ? "Saved (\(model.offlineSaveCooldownRemaining))" : "Save offline", systemImage: "tray.and.arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating || model.offlineSaveCooldownRemaining > 0)
+                        .focusable()
+                        .keyboardFocusStyle(keyboardTarget == .saveOffline)
+                    }
+
+                    Spacer()
+                }
+            }
+        }
+    }
+}
+
 private struct KeywordSection: View {
     @ObservedObject var model: CardComposerModel
+    @Binding var keyboardTarget: FocusTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -163,6 +350,8 @@ private struct KeywordSection: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
+                        .focusable()
+                        .keyboardFocusStyle(keyboardTarget == .keyword(token.id))
                     }
                 }
             }
@@ -177,7 +366,16 @@ private struct KeywordSection: View {
 
 private struct CardPreviewSection: View {
     @ObservedObject var model: CardComposerModel
+    let isCompact: Bool
+    @Binding var keyboardTarget: FocusTarget?
+    @FocusState.Binding var textFieldFocus: FocusTarget?
     @State private var isManagingQueue = false
+    @AppStorage(ButtonVisibilityKey.copyForAnki) private var showCopyForAnki = true
+    @AppStorage(ButtonVisibilityKey.sendToAnki) private var showSendToAnki = true
+    @AppStorage(ButtonVisibilityKey.clear) private var showClear = true
+    @AppStorage(ButtonVisibilityKey.manageQueue) private var showManageQueue = true
+    @AppStorage(ButtonVisibilityKey.syncQueue) private var showSyncQueue = true
+    @AppStorage(ButtonVisibilityKey.retryErrors) private var showRetryErrors = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -190,60 +388,55 @@ private struct CardPreviewSection: View {
                 }
             }
 
-            HStack(alignment: .top, spacing: 16) {
-                CardField(title: "FRONT · ENGLISH") {
-                    Text(frontText)
-                        .font(.system(size: 16))
-                        .textSelection(.enabled)
+            if isCompact {
+                VStack(alignment: .leading, spacing: 14) {
+                    frontCardField
+                    backCardField
                 }
-                CardField(title: "BACK · PORTUGUESE") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        TextField("Sentence translation", text: $model.translation, axis: .vertical)
-                        Divider()
-                        TextField("Keyword meaning", text: $model.keywordMeaning, axis: .vertical)
-                    }
-                    .font(.system(size: 15))
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    frontCardField
+                    backCardField
                 }
             }
 
-            HStack(spacing: 10) {
-                Button {
-                    model.generateDraft()
-                } label: {
-                    Label("Generate draft", systemImage: "sparkles")
+            if showCopyForAnki || showSendToAnki {
+                FlowLayout(spacing: 10) {
+                    if showCopyForAnki {
+                        Button {
+                            model.copyForAnki()
+                        } label: {
+                            Label("Copy for Anki", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!model.draft.hasContent)
+                        .focusable()
+                        .keyboardFocusStyle(keyboardTarget == .copyForAnki)
+                    }
+
+                    if showSendToAnki {
+                        Button {
+                            model.sendToAnki()
+                        } label: {
+                            Label("Send to Anki", systemImage: "arrow.up.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating)
+                        .focusable()
+                        .keyboardFocusStyle(keyboardTarget == .sendToAnki)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.canGenerate || model.isGenerating)
+            }
 
-                Button {
-                    model.copyForAnki()
-                } label: {
-                    Label("Copy for Anki", systemImage: "doc.on.doc")
+            if showClear {
+                HStack {
+                    Spacer()
+                    Button("Clear") { model.reset() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .focusable()
+                        .keyboardFocusStyle(keyboardTarget == .clear)
                 }
-                .buttonStyle(.bordered)
-                .disabled(!model.draft.hasContent)
-
-                Button {
-                    model.sendToAnki()
-                } label: {
-                    Label("Send to Anki", systemImage: "arrow.up.circle")
-                }
-                .buttonStyle(.bordered)
-                .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating)
-
-                Button {
-                    model.saveOffline()
-                } label: {
-                    Label(model.offlineSaveCooldownRemaining > 0 ? "Saved (\(model.offlineSaveCooldownRemaining))" : "Save offline", systemImage: "tray.and.arrow.down")
-                }
-                .buttonStyle(.bordered)
-                .disabled(model.translation.isEmpty || model.audioFileURL == nil || model.isGenerating || model.offlineSaveCooldownRemaining > 0)
-
-                Spacer()
-
-                Button("Clear") { model.reset() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
             }
 
             if let offlineFeedback = model.offlineFeedback {
@@ -262,36 +455,48 @@ private struct CardPreviewSection: View {
             }
 
                 if !model.pendingCards.isEmpty || !model.errorCards.isEmpty {
-                    HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 14) {
                         Label("\(model.pendingCards.count) queued", systemImage: "tray.full")
                         Label("\(model.errorCards.count) errors", systemImage: "exclamationmark.triangle")
                             .foregroundStyle(model.errorCards.isEmpty ? Color.secondary : Color.orange)
-                        Spacer()
-                        Button {
-                            isManagingQueue = true
-                        } label: {
-                            Label("Manage queue", systemImage: "list.bullet.rectangle")
                         }
-                        .buttonStyle(.bordered)
 
-                        Button {
-                            model.syncPendingCards()
-                        } label: {
-                        Label("Sync queue", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.pendingCards.isEmpty || model.isGenerating)
+                        if showManageQueue || showSyncQueue || showRetryErrors {
+                            FlowLayout(spacing: 10) {
+                                if showManageQueue {
+                                    Button {
+                                        isManagingQueue = true
+                                    } label: {
+                                        Label("Manage queue", systemImage: "list.bullet.rectangle")
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
 
-                    Button {
-                        model.retryErrorCards()
-                    } label: {
-                        Label("Retry errors", systemImage: "arrow.clockwise")
+                                if showSyncQueue {
+                                    Button {
+                                        model.syncPendingCards()
+                                    } label: {
+                                        Label("Sync queue", systemImage: "arrow.triangle.2.circlepath")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(model.pendingCards.isEmpty || model.isGenerating)
+                                }
+
+                                if showRetryErrors {
+                                    Button {
+                                        model.retryErrorCards()
+                                    } label: {
+                                        Label("Retry errors", systemImage: "arrow.clockwise")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(model.errorCards.isEmpty || model.isGenerating)
+                                }
+                            }
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(model.errorCards.isEmpty || model.isGenerating)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 if !model.errorCards.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -315,6 +520,30 @@ private struct CardPreviewSection: View {
         }
         .sheet(isPresented: $isManagingQueue) {
             QueueManagementView(model: model)
+        }
+    }
+
+    private var frontCardField: some View {
+        CardField(title: "FRONT · ENGLISH", height: isCompact ? 78 : 88) {
+            Text(frontText)
+                .font(.system(size: 16))
+                .lineLimit(2)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var backCardField: some View {
+        CardField(title: "BACK · PORTUGUESE", height: isCompact ? 88 : 96) {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("Sentence translation", text: $model.translation, axis: .vertical)
+                    .lineLimit(1...2)
+                    .focused($textFieldFocus, equals: .translation)
+                Divider()
+                TextField("Keyword meaning", text: $model.keywordMeaning, axis: .vertical)
+                    .lineLimit(1...2)
+                    .focused($textFieldFocus, equals: .keywordMeaning)
+            }
+            .font(.system(size: 15))
         }
     }
 
@@ -556,6 +785,7 @@ private struct QueueEditView: View {
 
 private struct CardField<Content: View>: View {
     let title: String
+    let height: CGFloat
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -564,8 +794,9 @@ private struct CardField<Content: View>: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             content
-                .frame(maxWidth: .infinity, minHeight: 105, alignment: .topLeading)
-                .padding(16)
+                .frame(height: height, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(12)
                 .background(Color(nsColor: .textBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2)))
@@ -586,6 +817,29 @@ private struct SectionLabel: View {
             Text(title)
                 .font(.headline)
         }
+    }
+}
+
+private struct KeyboardFocusStyle: ViewModifier {
+    let isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(isFocused ? Color.accentColor : Color.clear, lineWidth: 2)
+                    .padding(-3)
+            )
+            .shadow(
+                color: isFocused ? Color.accentColor.opacity(0.35) : Color.clear,
+                radius: 4
+            )
+    }
+}
+
+private extension View {
+    func keyboardFocusStyle(_ isFocused: Bool) -> some View {
+        modifier(KeyboardFocusStyle(isFocused: isFocused))
     }
 }
 
@@ -635,11 +889,104 @@ private struct FlowLayout: Layout {
     }
 }
 
+private struct KeyboardNavigationMonitor: NSViewRepresentable {
+    let onTab: (Bool) -> Bool
+    let onEnter: () -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.hostView = view
+        context.coordinator.installMonitor()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.hostView = nsView
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.removeMonitor()
+    }
+
+    final class Coordinator {
+        var parent: KeyboardNavigationMonitor
+        weak var hostView: NSView?
+        private var monitor: Any?
+
+        init(parent: KeyboardNavigationMonitor) {
+            self.parent = parent
+        }
+
+        deinit {
+            removeMonitor()
+        }
+
+        func installMonitor() {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, NSApp.isActive else { return event }
+
+                let blockedModifiers: NSEvent.ModifierFlags = [.command, .control, .option]
+                guard event.modifierFlags.intersection(blockedModifiers).isEmpty else { return event }
+
+                if event.keyCode == 48 {
+                    let handled = self.parent.onTab(!event.modifierFlags.contains(.shift))
+                    if handled {
+                        event.window?.makeFirstResponder(nil)
+                        return nil
+                    }
+                }
+
+                if event.keyCode == 36 || event.keyCode == 76 {
+                    return self.parent.onEnter() ? nil : event
+                }
+
+                return event
+            }
+        }
+
+        func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var model: CardComposerModel
+    @AppStorage(ButtonVisibilityKey.importImage) private var showImportImage = true
+    @AppStorage(ButtonVisibilityKey.recordSentence) private var showRecordSentence = true
+    @AppStorage(ButtonVisibilityKey.generateDraft) private var showGenerateDraft = true
+    @AppStorage(ButtonVisibilityKey.saveOffline) private var showSaveOffline = true
+    @AppStorage(ButtonVisibilityKey.copyForAnki) private var showCopyForAnki = true
+    @AppStorage(ButtonVisibilityKey.sendToAnki) private var showSendToAnki = true
+    @AppStorage(ButtonVisibilityKey.clear) private var showClear = true
+    @AppStorage(ButtonVisibilityKey.manageQueue) private var showManageQueue = true
+    @AppStorage(ButtonVisibilityKey.syncQueue) private var showSyncQueue = true
+    @AppStorage(ButtonVisibilityKey.retryErrors) private var showRetryErrors = true
 
     var body: some View {
         Form {
+            Section("Main window buttons") {
+                Toggle("Import image", isOn: $showImportImage)
+                Toggle("Record sentence", isOn: $showRecordSentence)
+                Toggle("Generate draft", isOn: $showGenerateDraft)
+                Toggle("Save offline", isOn: $showSaveOffline)
+                Toggle("Copy for Anki", isOn: $showCopyForAnki)
+                Toggle("Send to Anki", isOn: $showSendToAnki)
+                Toggle("Clear", isOn: $showClear)
+                Toggle("Manage queue", isOn: $showManageQueue)
+                Toggle("Sync queue", isOn: $showSyncQueue)
+                Toggle("Retry errors", isOn: $showRetryErrors)
+            }
+            .toggleStyle(.switch)
+
             Section("Translation") {
                 TextField("API endpoint", text: $model.apiEndpoint)
                 TextField("Model", text: $model.modelName)
@@ -665,7 +1012,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 360)
+        .frame(width: 540, height: 680)
         .padding()
     }
 }

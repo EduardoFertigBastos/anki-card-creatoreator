@@ -96,4 +96,5 @@ final class VoiceTranscriptionService: NSObject, ObservableObject {
             }
         }
     }
+
 }

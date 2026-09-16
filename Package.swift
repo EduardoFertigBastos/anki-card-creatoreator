@@ -10,10 +10,7 @@ let package = Package(
         .executable(name: "ContextCard", targets: ["ContextCard"])
     ],
     targets: [
-        .executableTarget(
-            name: "ContextCard",
-            resources: [.process("Resources")]
-        ),
+        .executableTarget(name: "ContextCard"),
         .testTarget(name: "ContextCardTests", dependencies: ["ContextCard"])
     ]
 )
