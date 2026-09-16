@@ -400,8 +400,8 @@ private struct CardPreviewSection: View {
                 }
             }
 
-            if showCopyForAnki || showSendToAnki {
-                FlowLayout(spacing: 10) {
+            if showCopyForAnki || showSendToAnki || (showClear && !hasQueuedCards) {
+                HStack(spacing: 10) {
                     if showCopyForAnki {
                         Button {
                             model.copyForAnki()
@@ -425,17 +425,12 @@ private struct CardPreviewSection: View {
                         .focusable()
                         .keyboardFocusStyle(keyboardTarget == .sendToAnki)
                     }
-                }
-            }
 
-            if showClear {
-                HStack {
                     Spacer()
-                    Button("Clear") { model.reset() }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .focusable()
-                        .keyboardFocusStyle(keyboardTarget == .clear)
+
+                    if showClear && !hasQueuedCards {
+                        clearButton
+                    }
                 }
             }
 
@@ -462,8 +457,8 @@ private struct CardPreviewSection: View {
                             .foregroundStyle(model.errorCards.isEmpty ? Color.secondary : Color.orange)
                         }
 
-                        if showManageQueue || showSyncQueue || showRetryErrors {
-                            FlowLayout(spacing: 10) {
+                        if showManageQueue || showSyncQueue || showRetryErrors || showClear {
+                            HStack(spacing: 10) {
                                 if showManageQueue {
                                     Button {
                                         isManagingQueue = true
@@ -491,6 +486,12 @@ private struct CardPreviewSection: View {
                                     }
                                     .buttonStyle(.bordered)
                                     .disabled(model.errorCards.isEmpty || model.isGenerating)
+                                }
+
+                                Spacer()
+
+                                if showClear {
+                                    clearButton
                                 }
                             }
                         }
@@ -530,6 +531,19 @@ private struct CardPreviewSection: View {
                 .lineLimit(2)
                 .textSelection(.enabled)
         }
+    }
+
+    private var hasQueuedCards: Bool {
+        !model.pendingCards.isEmpty || !model.errorCards.isEmpty
+    }
+
+    private var clearButton: some View {
+        Button("Clear") { model.reset() }
+            .buttonStyle(.plain)
+            .font(.body)
+            .foregroundStyle(.secondary)
+            .focusable()
+            .keyboardFocusStyle(keyboardTarget == .clear)
     }
 
     private var backCardField: some View {
